@@ -9,8 +9,9 @@ Public surface (kept small and stable):
 
 * :func:`logwatch.cli.main`            - command line entry point
 * :mod:`logwatch.parsers`              - line parsers for each log format
-* :mod:`logwatch.detectors`            - security heuristics / detections
-* :mod:`logwatch.report`               - human-readable report rendering
+* :mod:`logwatch.detectors`            - security heuristics / detections (incl. allow-list)
+* :mod:`logwatch.report`               - human-readable terminal report rendering
+* :mod:`logwatch.exporters`            - standalone HTML / Markdown report export
 
 Run it with::
 
@@ -20,4 +21,4 @@ Run it with::
 
 __all__ = ["__version__"]
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"

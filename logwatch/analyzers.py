@@ -35,12 +35,14 @@ class AccessAnalyzer:
     top_n: int = 10
     since: Optional[datetime] = None
     max_query_len: int = detectors.MAX_QUERY_LEN
+    allow: Optional[detectors.AllowList] = None
 
     # Running counters (created fresh per instance).
     total_lines: int = 0
     parsed: int = 0
     unparsed: int = 0
     skipped_since: int = 0
+    suppressed: int = 0  # suspicions hidden because the source IP is allow-listed
 
     ips: Counter = field(default_factory=Counter)
     paths: Counter = field(default_factory=Counter)
@@ -98,10 +100,15 @@ class AccessAnalyzer:
         # entire dataset in memory.
         self._consider_biggest(entry)
 
-        # Security heuristics.
+        # Security heuristics. A request from an allow-listed source is still
+        # counted in all the traffic stats above, but never raised as a
+        # suspicion - that is the whole point of the allow-list.
         suspicion = detectors.classify_suspicious(entry, max_query_len=self.max_query_len)
         if suspicion is not None:
-            self.suspicions.append(suspicion)
+            if self.allow is not None and self.allow.contains(entry.ip):
+                self.suppressed += 1
+            else:
+                self.suspicions.append(suspicion)
 
     def _consider_biggest(self, entry: AccessEntry) -> None:
         """Maintain a top-N list of the biggest responses by body size."""
@@ -157,6 +164,7 @@ class AccessAnalyzer:
             ],
             "suspicious": {
                 "total": len(self.suspicions),
+                "suppressed": self.suppressed,
                 "by_category": susp_by_cat.most_common(),
                 "by_ip": susp_by_ip.most_common(self.top_n),
                 "samples": [
@@ -187,11 +195,13 @@ class AuthAnalyzer:
     bf_threshold: int = 5
     bf_window: int = 5
     assume_year: Optional[int] = None
+    allow: Optional[detectors.AllowList] = None
 
     total_lines: int = 0
     parsed: int = 0
     unparsed: int = 0
     skipped_since: int = 0
+    suppressed: int = 0  # failed/invalid events hidden because the IP is allow-listed
 
     failed: int = 0
     accepted: int = 0
@@ -231,15 +241,27 @@ class AuthAnalyzer:
             if self.last_time is None or event.time > self.last_time:
                 self.last_time = event.time
 
+        # An allow-listed source is still parsed and time-spanned, but its
+        # failed/invalid attempts are not counted as attack pressure (no entry
+        # in failed_ips / invalid_users), so it never appears in the report's
+        # "top attacking IPs" or brute-force sections.
+        allow_listed = self.allow is not None and self.allow.contains(event.ip)
+
         if event.kind == "failed":
             self.failed += 1
-            self.failed_ips[event.ip] += 1
-            if event.invalid_user:
-                self.invalid_users[event.user] += 1
+            if allow_listed:
+                self.suppressed += 1
+            else:
+                self.failed_ips[event.ip] += 1
+                if event.invalid_user:
+                    self.invalid_users[event.user] += 1
         elif event.kind == "invalid":
             # "Invalid user" notices count toward attack pressure too.
-            self.failed_ips[event.ip] += 1
-            self.invalid_users[event.user] += 1
+            if allow_listed:
+                self.suppressed += 1
+            else:
+                self.failed_ips[event.ip] += 1
+                self.invalid_users[event.user] += 1
         elif event.kind == "accepted":
             self.accepted += 1
             self.accepted_users[event.user] += 1
@@ -251,6 +273,7 @@ class AuthAnalyzer:
             self.events,
             threshold=self.bf_threshold,
             window_minutes=self.bf_window,
+            allow=self.allow,
         )
 
         return {
@@ -259,6 +282,7 @@ class AuthAnalyzer:
             "parsed": self.parsed,
             "unparsed": self.unparsed,
             "skipped_since": self.skipped_since,
+            "suppressed": self.suppressed,
             "failed_logins": self.failed,
             "accepted_logins": self.accepted,
             "time_span": {

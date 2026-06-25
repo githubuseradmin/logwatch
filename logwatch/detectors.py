@@ -70,6 +70,67 @@ def classify_ip(value: str) -> str:
         return "public"
     return "other"
 
+
+# ---------------------------------------------------------------------------
+# Allow-list (known-good IPs / CIDR ranges)
+# ---------------------------------------------------------------------------
+#
+# Real logs are full of *your own* infrastructure: the office egress IP, a
+# monitoring probe, a CI runner, a partner's API client. Those hosts trip the
+# scanner/oversized-query heuristics constantly (health checks, big exports,
+# uptime pings) and bury the genuine attacks in noise. An allow-list lets the
+# operator name these known-good sources once so logwatch stops flagging them.
+
+
+class AllowList:
+    """A set of IPs / CIDR ranges whose traffic is treated as known-good.
+
+    Construct from a list of entries, each either a single address
+    (``198.51.100.7``) or a CIDR network (``10.0.0.0/8``), IPv4 or IPv6. Use
+    :meth:`contains` to test a logged source address. Unparseable entries are
+    ignored (with their text kept in :attr:`bad_entries` so the CLI can warn).
+    An empty allow-list matches nothing, so detection is unchanged by default.
+    """
+
+    def __init__(self, entries: Iterable[str] = ()) -> None:
+        self.networks: List[ipaddress._BaseNetwork] = []
+        self.bad_entries: List[str] = []
+        for raw in entries:
+            entry = raw.strip()
+            if not entry or entry.startswith("#"):
+                continue
+            try:
+                # strict=False lets a host address stand in for a /32 or /128.
+                self.networks.append(ipaddress.ip_network(entry, strict=False))
+            except ValueError:
+                self.bad_entries.append(entry)
+
+    def __bool__(self) -> bool:
+        return bool(self.networks)
+
+    def __len__(self) -> int:
+        return len(self.networks)
+
+    def contains(self, value: str) -> bool:
+        """Return ``True`` if ``value`` is an IP inside any allow-listed range.
+
+        Non-IP values (a logged hostname, ``-``) are never allow-listed: we can
+        only reason about addresses. A mixed IPv4/IPv6 list is fine because an
+        address is only ever compared against networks of its own version.
+        """
+        if not self.networks:
+            return False
+        try:
+            ip = ipaddress.ip_address(value)
+        except ValueError:
+            return False
+        return any(ip in net for net in self.networks if net.version == ip.version)
+
+
+def load_allowlist(entries: Iterable[str]) -> AllowList:
+    """Build an :class:`AllowList` from raw CLI/file entries (convenience)."""
+    return AllowList(entries)
+
 # ---------------------------------------------------------------------------
 # HTTP access-log heuristics
 # ---------------------------------------------------------------------------
@@ -211,6 +272,7 @@ def detect_bruteforce(
     *,
     threshold: int = 5,
     window_minutes: int = 5,
+    allow: Optional["AllowList"] = None,
 ) -> List[BruteForceHit]:
     """Flag IPs with too many failed sshd logins inside a sliding time window.
 
@@ -220,11 +282,17 @@ def detect_bruteforce(
     Events lacking a timestamp fall back to a pure count check so we never miss
     an attacker just because the clock was unparseable.
 
+    Source IPs covered by ``allow`` are skipped entirely - a noisy known-good
+    host (a misconfigured internal service retrying logins, say) should not be
+    reported as an attacker.
+
     Results are sorted by total failure count, descending (worst first).
     """
     by_ip: dict[str, List[AuthEvent]] = defaultdict(list)
     for ev in events:
         if ev.kind in ("failed", "invalid"):
+            if allow is not None and allow.contains(ev.ip):
+                continue
             by_ip[ev.ip].append(ev)
 
     window = timedelta(minutes=window_minutes)
@@ -294,3 +362,20 @@ def summarize_risk_auth(hits: Sequence[BruteForceHit], total_failed: int) -> str
     if hits:
         return "MEDIUM"
     return "LOW"
+
+
+# Ordered severity of the risk labels, lowest to highest. Used to compare a
+# run's risk against a ``--fail-on`` threshold.
+RISK_ORDER = ("LOW", "MEDIUM", "HIGH")
+
+
+def risk_rank(label: str) -> int:
+    """Map a risk label to its ordinal (LOW=0, MEDIUM=1, HIGH=2).
+
+    Unknown labels rank as ``0`` (LOW) so a typo can never silently escalate a
+    run to a failing exit code.
+    """
+    try:
+        return RISK_ORDER.index(label)
+    except ValueError:
+        return 0

@@ -11,9 +11,11 @@ colour is disabled, so the same code path produces clean plain text for files.
 
 from __future__ import annotations
 
+import textwrap
 from typing import Dict, List
 
 from . import colors
+from .exporters import ASN_DISCLAIMER
 
 # Risk label -> colour function, used by the final risk banner.
 _RISK_STYLE = {
@@ -139,6 +141,7 @@ def render_access(data: Dict, top_n: int) -> str:
         ["IP", "Requests"],
         ["l", "r"],
     )
+    out.append(_disclaimer_note())
     out.append("")
 
     # Top paths.
@@ -175,6 +178,12 @@ def render_access(data: Dict, top_n: int) -> str:
     susp = data["suspicious"]
     title = f"Suspicious requests ({susp['total']})"
     out.append(_header(title))
+    if susp.get("suppressed"):
+        out.append(
+            colors.dim(
+                f"  ({susp['suppressed']} from allow-listed sources suppressed)"
+            )
+        )
     if susp["total"] == 0:
         out.append(colors.green("  No suspicious requests detected."))
     else:
@@ -227,6 +236,8 @@ def render_auth(data: Dict, top_n: int) -> str:
         out.append(_kv("Skipped (--since)", str(data["skipped_since"])))
     out.append(_kv("Failed logins", colors.red(str(data["failed_logins"]))))
     out.append(_kv("Accepted logins", colors.green(str(data["accepted_logins"]))))
+    if data.get("suppressed"):
+        out.append(_kv("Suppressed (allow)", str(data["suppressed"])))
     if span["first"] or span["last"]:
         out.append(_kv("Time span", f"{span['first']}  ->  {span['last']}"))
     out.append("")
@@ -276,6 +287,7 @@ def render_auth(data: Dict, top_n: int) -> str:
         ["IP", "Failures"],
         ["l", "r"],
     )
+    out.append(_disclaimer_note())
     out.append("")
 
     # Invalid users tried.
@@ -320,6 +332,14 @@ def _truncate(text: str, length: int) -> str:
     if len(text) <= length:
         return text
     return text[: length - 1] + "…"
+
+
+def _disclaimer_note() -> str:
+    """Render the dimmed GeoIP-free / ASN attribution disclaimer block."""
+    wrapped = textwrap.fill(
+        ASN_DISCLAIMER, width=76, initial_indent="  ", subsequent_indent="  "
+    )
+    return colors.dim(wrapped)
 
 
 def _risk_banner(risk: str) -> str:

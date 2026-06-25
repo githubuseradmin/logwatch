@@ -1,3 +1,5 @@
+English | [Русский](README.ru.md)
+
 # logwatch
 
 A zero-dependency **log analysis & security-reporting CLI** written in pure
@@ -5,7 +7,8 @@ Python (standard library only). Point it at NGINX/Apache access logs or Linux
 `sshd` auth logs and it produces a clear, colour-coded, sectioned security/ops
 report — top talkers, status-code health, **suspicious-request detection**
 (path traversal, SQLi, scanner probes, …) and **SSH brute-force detection** —
-plus a machine-readable `--json` mode and an automation-friendly exit code.
+plus machine-readable `--json`, shareable **HTML / Markdown reports**, a
+known-good **allow-list**, and a tunable, automation-friendly **exit code**.
 
 It is a single, self-contained package. No `pip install` of anything. Drop it
 on any box with Python 3.10+ and run it.
@@ -20,8 +23,8 @@ HTTP ACCESS LOG REPORT
   Total bytes sent       5.2 MB
   Peak req/min           12 at 2024-10-10 13:55
   ...
-Suspicious requests (15)
-========================
+Suspicious requests (9)
+=======================
   By category:
     Scanner / recon path  8
     SQL injection pattern 3
@@ -63,12 +66,19 @@ portfolio piece aimed at networking / security / DevOps work.
 - **Auth-log report:** failed vs accepted logins, **brute-force detection**
   (IPs over a failure threshold inside a sliding time window), invalid users
   tried, top attacking IPs, and an accepted-logins summary.
-- **`.gz` support** (detected by magic bytes, not just the extension),
-  **multiple files**, and **stdin** (`-`).
-- Flags: `--top N`, `--since`, `--format`, `--threshold`, `--window`,
-  `--max-query-len`, `--json`, `--color/--no-color`.
+- **Allow-list** (`--allow` / `--allow-file`): name your own known-good IPs and
+  CIDR ranges (the office egress, a monitoring probe, a CI runner) and their
+  detections are suppressed and counted separately, so real attacks stand out.
+- **Shareable reports:** `--html report.html` writes a clean, self-contained
+  HTML file (inline CSS, no JavaScript, dark-mode aware) you can email or attach
+  to a ticket; `--md report.md` writes GitHub-flavoured Markdown for issues,
+  wikis or a CI job summary.
 - **`--json`** output for piping into other tools.
-- **Risk-based exit code** so it works as a cron/CI gate (see below).
+- **Tunable risk-based exit code** (`--fail-on low|medium|high`) so it works as
+  a cron/CI gate (see below).
+- **`.gz` support** (detected by magic bytes, not just the extension),
+  **multiple files**, and **stdin** (`-`). Corrupt/truncated files and garbage
+  lines are warned about and skipped, never crash the run.
 
 ## Requirements
 
@@ -103,7 +113,16 @@ options:
   --window MIN          auth: brute-force sliding window in minutes (default: 5)
   --max-query-len N     access: query-string length over which a request is
                         suspicious (default: 512)
+  --allow IP/CIDR       treat this IP or CIDR as known-good and suppress its
+                        detections; repeatable
+  --allow-file PATH     read more allow-list entries (one IP/CIDR per line,
+                        '#' comments allowed) from a file
   --json                emit machine-readable JSON instead of the text report
+  --html FILE           also write a self-contained HTML report to FILE
+  --md FILE             also write a Markdown report to FILE
+  --fail-on {low,medium,high}
+                        minimum risk level that makes the exit code non-zero,
+                        for CI gates (default: medium)
   --color / --no-color  force or disable coloured output
   --version             show the version and exit
 ```
@@ -120,29 +139,65 @@ python -m logwatch --format auth --threshold 10 --window 2 samples/auth.log
 # Analyse a rotated, compressed log and emit JSON, top-5 only
 python -m logwatch --json --top 5 samples/access.log.gz
 
+# Suppress your own monitoring / office IPs so real attacks stand out
+python -m logwatch --allow 10.0.0.0/8 --allow 198.51.100.7 samples/access.log
+
+# Keep known-good sources in a file (one IP/CIDR per line, # comments allowed)
+python -m logwatch --allow-file allow.txt /var/log/auth.log
+
+# Write a shareable HTML and Markdown report alongside the terminal output
+python -m logwatch --html report.html --md report.md samples/access.log
+
 # Stream from stdin (e.g. live tail or a remote box)
 ssh server 'cat /var/log/auth.log' | python -m logwatch --format auth -
 
-# Only look at events from a given moment onward
-python -m logwatch --since '2024-10-10 13:57:00' samples/access.log
-
-# Analyse several files at once
-python -m logwatch samples/access.log samples/access.log.gz
+# Only fail a CI step on HIGH risk; MEDIUM is reported but the step passes
+python -m logwatch --fail-on high --format auth /var/log/auth.log
 ```
 
 ## Exit codes
 
 logwatch is designed to drop into a cron job or CI step:
 
-| Code | Meaning                                                            |
-|------|-------------------------------------------------------------------|
-| `0`  | Report produced, risk **LOW** (nothing notable).                  |
-| `2`  | Report produced, but **MEDIUM / HIGH** risk was detected.         |
-| `1`  | Usage / input error (bad `--since`, no readable lines, …).        |
+| Code | Meaning                                                                 |
+|------|------------------------------------------------------------------------|
+| `0`  | Report produced; risk **below** the `--fail-on` threshold.             |
+| `2`  | Report produced; risk **met or exceeded** `--fail-on` (default MEDIUM).|
+| `1`  | Usage / input error (bad `--since`, no readable lines, …).             |
+
+`--fail-on` controls how sensitive the gate is: `--fail-on low` fails on any
+detection, `--fail-on high` fails only on a serious one. The default is
+`medium`.
 
 ```bash
 # Fail a pipeline loudly when an attack is visible in today's logs
 python -m logwatch --format auth /var/log/auth.log || echo "review the logs!"
+```
+
+## Allow-list (known-good sources)
+
+Real logs are full of *your own* infrastructure: the office egress IP, an
+uptime probe, a CI runner, a partner's API client. Those hosts trip the
+scanner / oversized-query heuristics constantly (health checks, big exports,
+pings) and bury genuine attacks in the noise.
+
+`--allow` and `--allow-file` let you name those sources once. Each entry is a
+single IP (`198.51.100.7`) or a CIDR range (`10.0.0.0/8`), IPv4 or IPv6:
+
+- Allow-listed sources are **still counted** in the traffic statistics (this is
+  not a filter that hides them) — they are only excluded from the security
+  detections (suspicious requests, brute-force, top-attacking-IPs).
+- The number of suppressed detections is reported separately, so you can see
+  how much was filtered.
+- Unparseable entries are skipped with a warning; a missing `--allow-file` is
+  warned about, not fatal.
+
+```bash
+# allow.txt
+# our monitoring and CI
+198.51.100.7
+10.0.0.0/8        # entire internal range
+2001:db8:42::/48  # IPv6 office range
 ```
 
 ## Detections explained
@@ -175,8 +230,22 @@ attacker.
 ### Risk summary
 
 A deliberately simple, explainable label (`LOW` / `MEDIUM` / `HIGH`) is printed
-at the end and drives the exit code. It is based on the volume and spread of
-detections — not a black-box score — so you can reason about it.
+at the end and drives the exit code (via `--fail-on`). It is based on the volume
+and spread of detections — not a black-box score — so you can reason about it.
+
+## No GeoIP / ASN attribution (by design)
+
+logwatch ships with **no GeoIP/ASN database and makes no network calls** — that
+is what keeps it zero-dependency, offline-safe and fast. Consequently it does
+**not** tell you which country, network or organisation an IP belongs to. Every
+report repeats this disclaimer near its IP tables. To attribute an address,
+look it up yourself, e.g.:
+
+```bash
+whois 185.220.101.4          # RDAP/whois: owner, ASN, abuse contact
+```
+
+…or feed the JSON output into your own threat-intel enrichment.
 
 ## Project layout
 
@@ -185,11 +254,12 @@ logwatch/
 ├── logwatch/                 # the runnable package
 │   ├── __init__.py
 │   ├── __main__.py           # enables `python -m logwatch`
-│   ├── cli.py                # argparse, file/gzip/stdin reading, dispatch
+│   ├── cli.py                # argparse, file/gzip/stdin reading, dispatch, exports
 │   ├── parsers.py            # access-log & sshd line parsers (pure functions)
-│   ├── detectors.py          # suspicious-request + brute-force heuristics
+│   ├── detectors.py          # suspicious-request + brute-force + allow-list logic
 │   ├── analyzers.py          # streaming aggregators -> summary dicts
-│   ├── report.py             # human-readable, coloured report rendering
+│   ├── report.py             # human-readable, coloured terminal report
+│   ├── exporters.py          # self-contained HTML + Markdown report builders
 │   └── colors.py             # tiny ANSI helper (TTY/NO_COLOR aware)
 ├── samples/                  # synthetic logs that work out of the box
 │   ├── access.log            # normal traffic + traversal/SQLi/scanner lines
@@ -199,16 +269,19 @@ logwatch/
 │   ├── test_parsers.py
 │   ├── test_detectors.py
 │   ├── test_analyzers.py
+│   ├── test_allowlist.py     # allow-list + risk-rank + analyser integration
+│   ├── test_exporters.py     # HTML/Markdown export (well-formedness, escaping)
 │   └── test_cli.py
-├── README.md
+├── README.md                 # this file (English)
+├── README.ru.md              # Russian translation
 ├── requirements.txt          # intentionally empty (zero deps)
 └── .gitignore
 ```
 
 The design keeps the layers cleanly separated: **parsers** say *what happened*,
 **detectors** say *whether it is suspicious*, **analyzers** aggregate, and
-**report** renders. Every layer except `cli` is pure (no I/O), which is what
-makes the test suite fast and deterministic.
+**report** / **exporters** render. Every layer except `cli` is pure (no I/O),
+which is what makes the test suite fast and deterministic.
 
 ## Running the tests
 
@@ -220,9 +293,12 @@ python -m unittest discover -s tests -v
 python -m py_compile logwatch/*.py tests/*.py
 ```
 
-The suite (61 tests) covers the parsers, every detector category, the
-brute-force window logic, the aggregators, format auto-detection, and the CLI
-end-to-end (including gzip input, JSON output and the risk exit code).
+The suite (92 tests) covers the parsers, every detector category, the
+brute-force window logic, the allow-list (IP/CIDR/IPv6, suppression in both
+analysers), the aggregators, format auto-detection, the HTML/Markdown exporters
+(well-formedness and HTML-escaping of hostile fields), and the CLI end-to-end
+(including gzip input, corrupt-gzip recovery, JSON output, the allow-list flags
+and the `--fail-on` exit code).
 
 ## Ethics & scope
 
