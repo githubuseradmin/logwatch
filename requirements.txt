@@ -1,0 +1,7 @@
+# logwatch has ZERO third-party dependencies.
+#
+# It is built entirely on the Python 3.10+ standard library
+# (re, argparse, collections, datetime, ipaddress, gzip, json, urllib).
+#
+# This file is intentionally empty so that `pip install -r requirements.txt`
+# is a valid no-op and CI tooling that expects the file to exist is satisfied.
