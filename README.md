@@ -61,6 +61,9 @@ portfolio piece aimed at networking / security / DevOps work.
   - cross-site-scripting probes (`<script>`, `onerror=`, …)
   - common scanner / recon paths (`/wp-admin`, `/.env`, `/phpmyadmin`,
     `/.git/`, `/cgi-bin/`, …)
+  - sensitive-file probes (`/.env`, `/.git/config`, `/wp-config.php`,
+    `/.aws/credentials`, `/id_rsa`, `/.ssh/`, `/.htpasswd`, `/server-status`,
+    `/phpinfo.php`, `/.DS_Store`, and `.sql`/`.bak`/`.old` dumps)
   - oversized query strings
   - unusual / disallowed HTTP methods
 - **Auth-log report:** failed vs accepted logins, **brute-force detection**
@@ -210,6 +213,7 @@ single IP (`198.51.100.7`) or a CIDR range (`10.0.0.0/8`), IPv4 or IPv6:
 | `sqli`              | `UNION SELECT`, `OR 1=1`, `' OR '1'='1`, `sleep()`, `; DROP TABLE`, `information_schema`, … |
 | `xss`               | `<script`, `javascript:`, `onerror=`, `onload=` in the URL.        |
 | `scanner_path`      | Requests to known recon paths (`/wp-admin`, `/.env`, `/phpmyadmin`, `/.git/`, `/cgi-bin/`, `/actuator`, …). |
+| `sensitive_file`    | Probes for secrets/internals: `/.env`, `/.git/config`, `/wp-config.php`, `/.aws/credentials`, `/id_rsa`, `/.ssh/`, `/.htpasswd`, `/server-status`, `/phpinfo.php`, `/.DS_Store`, and config/db dumps (`.sql`, `.bak`, `.old`, …). A **served** (2xx) sensitive file escalates the run to HIGH risk. |
 | `oversized_query`   | Query string longer than `--max-query-len` (default 512 chars).    |
 | `bad_method`        | HTTP method outside the normal `GET/POST/HEAD/PUT/DELETE/PATCH/OPTIONS` set. |
 
@@ -293,7 +297,7 @@ python -m unittest discover -s tests -v
 python -m py_compile logwatch/*.py tests/*.py
 ```
 
-The suite (92 tests) covers the parsers, every detector category, the
+The suite (100 tests) covers the parsers, every detector category, the
 brute-force window logic, the allow-list (IP/CIDR/IPv6, suppression in both
 analysers), the aggregators, format auto-detection, the HTML/Markdown exporters
 (well-formedness and HTML-escaping of hostile fields), and the CLI end-to-end

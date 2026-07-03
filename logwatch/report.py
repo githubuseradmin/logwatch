@@ -30,6 +30,7 @@ _CATEGORY_LABELS = {
     "sqli": "SQL injection pattern",
     "xss": "Cross-site scripting probe",
     "scanner_path": "Scanner / recon path",
+    "sensitive_file": "Sensitive-file probe",
     "oversized_query": "Oversized query string",
     "bad_method": "Unusual HTTP method",
 }

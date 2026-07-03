@@ -57,6 +57,8 @@ class TestAccessAnalyzer(unittest.TestCase):
         cats = dict(self.data["suspicious"]["by_category"])
         self.assertIn("path_traversal", cats)
         self.assertIn("scanner_path", cats)
+        # The /.env request is both a recon path and a sensitive-file probe.
+        self.assertIn("sensitive_file", cats)
 
     def test_biggest_response_first(self):
         self.assertEqual(self.data["biggest_responses"][0]["size"], 5000000)

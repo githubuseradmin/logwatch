@@ -66,6 +66,10 @@ Risk summary
   - попытки межсайтового скриптинга (`<script>`, `onerror=`, …)
   - типичные пути сканеров / разведки (`/wp-admin`, `/.env`, `/phpmyadmin`,
     `/.git/`, `/cgi-bin/`, …)
+  - обращения к чувствительным файлам (`/.env`, `/.git/config`,
+    `/wp-config.php`, `/.aws/credentials`, `/id_rsa`, `/.ssh/`, `/.htpasswd`,
+    `/server-status`, `/phpinfo.php`, `/.DS_Store`, а также дампы
+    `.sql`/`.bak`/`.old`)
   - чрезмерно длинные строки запроса
   - необычные / недопустимые HTTP-методы
 - **Отчёт по auth-логу:** неудачные и успешные входы, **обнаружение перебора
@@ -222,6 +226,7 @@ IPv4 или IPv6:
 | `sqli`              | `UNION SELECT`, `OR 1=1`, `' OR '1'='1`, `sleep()`, `; DROP TABLE`, `information_schema`, … |
 | `xss`               | `<script`, `javascript:`, `onerror=`, `onload=` в URL.             |
 | `scanner_path`      | Запросы к известным путям разведки (`/wp-admin`, `/.env`, `/phpmyadmin`, `/.git/`, `/cgi-bin/`, `/actuator`, …). |
+| `sensitive_file`    | Обращения к секретам/внутренним файлам: `/.env`, `/.git/config`, `/wp-config.php`, `/.aws/credentials`, `/id_rsa`, `/.ssh/`, `/.htpasswd`, `/server-status`, `/phpinfo.php`, `/.DS_Store`, а также дампы конфигов/БД (`.sql`, `.bak`, `.old`, …). Если чувствительный файл был **отдан** (2xx), риск запуска повышается до HIGH. |
 | `oversized_query`   | Строка запроса длиннее `--max-query-len` (по умолч. 512 символов). |
 | `bad_method`        | HTTP-метод вне обычного набора `GET/POST/HEAD/PUT/DELETE/PATCH/OPTIONS`. |
 
@@ -306,7 +311,7 @@ python -m unittest discover -s tests -v
 python -m py_compile logwatch/*.py tests/*.py
 ```
 
-Набор (92 теста) покрывает парсеры, каждую категорию детекторов, логику окна
+Набор (100 тестов) покрывает парсеры, каждую категорию детекторов, логику окна
 перебора, allow-list (IP/CIDR/IPv6, подавление в обоих анализаторах),
 агрегаторы, автоопределение формата, экспортёры HTML/Markdown (корректность и
 HTML-экранирование враждебных полей) и CLI целиком (включая ввод gzip,

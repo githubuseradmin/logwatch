@@ -8,8 +8,8 @@ the line-format code.
 Two families of detectors live here:
 
 * :func:`classify_suspicious` - per-request heuristics for HTTP access logs
-  (path traversal, SQLi-ish payloads, scanner/recon paths, oversized query
-  strings and disallowed HTTP methods).
+  (path traversal, SQLi-ish payloads, scanner/recon paths, sensitive-file
+  probes, oversized query strings and disallowed HTTP methods).
 * :func:`detect_bruteforce` - windowed brute-force detection for sshd auth
   logs (an IP exceeding a failed-login threshold inside a sliding time window).
 
@@ -177,13 +177,40 @@ _SCANNER_PATHS = (
     "/actuator", "/solr/", "/boaform", "/manager/html", "/.well-known/security",
 )
 
+# Sensitive files / paths whose mere retrieval leaks secrets or internals:
+# credentials, private keys, VCS metadata, framework configs and server
+# diagnostics. Overlaps with a few scanner paths on purpose - a request to
+# ``/.env`` is both a recon probe *and* a sensitive-file leak attempt, and we
+# want it reported under both lenses. Matched as a case-insensitive substring
+# of the decoded path (the same treatment scanner paths get).
+_SENSITIVE_PATHS = (
+    "/.env", "/.git/", "/.git/config", "/.gitignore", "/.svn/", "/.hg/",
+    "/wp-config.php", "/config.php", "/configuration.php", "/settings.py",
+    "/.aws/credentials", "/.aws/config", "/id_rsa", "/id_dsa", "/id_ecdsa",
+    "/id_ed25519", "/.ssh/", "/.htpasswd", "/.htaccess", "/.netrc",
+    "/.npmrc", "/.dockercfg", "/.docker/config.json", "/.pgpass",
+    "/server-status", "/server-info", "/phpinfo.php", "/info.php",
+    "/.ds_store", "/web.config", "/.bash_history", "/.mysql_history",
+    "/credentials", "/secrets.yml", "/secrets.yaml",
+)
+
+# Sensitive *file extensions*: config, database and backup dumps left on the
+# web root. Matched on the path's suffix (before the query string), so
+# ``/backup.sql``, ``/db.sql.gz``, ``/index.php.bak`` and ``/config.old`` all
+# trip. These are classic "someone left a dump in the docroot" leaks.
+_SENSITIVE_SUFFIXES = (
+    ".sql", ".sql.gz", ".sql.bak", ".bak", ".old", ".backup", ".swp",
+    ".save", ".orig", ".dump", ".db", ".sqlite", ".sqlite3", ".pem", ".key",
+    ".p12", ".pfx", ".pkcs12", ".keystore",
+)
+
 
 @dataclass
 class Suspicion:
     """A single suspicious access request and why it was flagged."""
 
     entry: AccessEntry
-    categories: List[str]  # e.g. ["path_traversal", "scanner_path"]
+    categories: List[str]  # e.g. ["path_traversal", "scanner_path", "sensitive_file"]
 
     @property
     def ip(self) -> str:
@@ -201,6 +228,24 @@ def _decode(value: str) -> str:
         return unquote_plus(value)
     except Exception:
         return value
+
+
+def _is_sensitive_file(decoded_path: str) -> bool:
+    """Return ``True`` if the decoded path targets a sensitive file/location.
+
+    Two rules are combined: a case-insensitive substring match against
+    :data:`_SENSITIVE_PATHS` (credentials, keys, VCS metadata, framework
+    configs, server diagnostics) and a suffix match against
+    :data:`_SENSITIVE_SUFFIXES` (config/db dumps and ``.bak``/``.old`` backups)
+    applied to the path portion only, so a trailing query string never hides
+    the extension.
+    """
+    low = decoded_path.lower()
+    if any(sp in low for sp in _SENSITIVE_PATHS):
+        return True
+    # Only the path matters for the suffix test - strip any query string first.
+    path_only = low.split("?", 1)[0].split("#", 1)[0]
+    return any(path_only.endswith(suffix) for suffix in _SENSITIVE_SUFFIXES)
 
 
 def classify_suspicious(
@@ -238,12 +283,17 @@ def classify_suspicious(
     if any(sp in low for sp in _SCANNER_PATHS):
         categories.append("scanner_path")
 
-    # 5) Oversized query string (everything after the first '?').
+    # 5) Sensitive-file probe: requests targeting secrets, keys, VCS metadata,
+    #    framework configs, server diagnostics or config/db/backup dumps.
+    if _is_sensitive_file(decoded):
+        categories.append("sensitive_file")
+
+    # 6) Oversized query string (everything after the first '?').
     query = raw_path.split("?", 1)[1] if "?" in raw_path else ""
     if len(query) > max_query_len:
         categories.append("oversized_query")
 
-    # 6) Unusual / disallowed HTTP method.
+    # 7) Unusual / disallowed HTTP method.
     if entry.method and entry.method != "-" and entry.method.upper() not in ALLOWED_METHODS:
         categories.append("bad_method")
 
@@ -341,9 +391,19 @@ def summarize_risk_access(suspicions: Sequence[Suspicion], total_requests: int) 
 
     The label feeds the final "risk summary" section. It is intentionally
     simple and explainable rather than a black-box score.
+
+    Beyond raw volume, a *successful* sensitive-file probe - a request for a
+    secret/key/dump (``sensitive_file``) that returned a 2xx status, i.e. the
+    server very likely handed the file over - is treated as HIGH on its own.
+    An actual credential/key leak is serious even if it is the only flagged
+    request, so it should never be buried as LOW.
     """
     if not suspicions:
         return "LOW"
+    # A sensitive file that was actually served (2xx) is a probable leak.
+    for s in suspicions:
+        if "sensitive_file" in s.categories and s.entry.status_class == "2xx":
+            return "HIGH"
     distinct_ips = len({s.ip for s in suspicions})
     n = len(suspicions)
     if n >= 25 or distinct_ips >= 10:

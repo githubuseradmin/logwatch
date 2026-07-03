@@ -87,6 +87,70 @@ class TestSuspiciousClassifier(unittest.TestCase):
         self.assertIn("scanner_path", s.categories)
         self.assertIn("sqli", s.categories)
 
+    def test_sensitive_file_named_paths(self):
+        # Each of these targets a secret/config/key/diagnostic file and must be
+        # flagged as a sensitive-file probe.
+        for path in (
+            "/.env",
+            "/.git/config",
+            "/wp-config.php",
+            "/.aws/credentials",
+            "/id_rsa",
+            "/.ssh/authorized_keys",
+            "/.htpasswd",
+            "/server-status",
+            "/phpinfo.php",
+            "/.DS_Store",
+        ):
+            s = classify_suspicious(_access(path))
+            self.assertIsNotNone(s, path)
+            self.assertIn("sensitive_file", s.categories, path)
+
+    def test_sensitive_file_backup_and_dump_suffixes(self):
+        # Config/db dumps and .bak/.old backups left in the docroot.
+        for path in (
+            "/backup.sql",
+            "/db.sql.gz",
+            "/wp-config.php.bak",
+            "/index.php.old",
+            "/app.db",
+            "/private.key",
+            "/cert.pem",
+        ):
+            s = classify_suspicious(_access(path))
+            self.assertIsNotNone(s, path)
+            self.assertIn("sensitive_file", s.categories, path)
+
+    def test_sensitive_file_suffix_ignores_query_string(self):
+        # The suffix test looks at the path, not a query string that merely
+        # ends in a sensitive-looking extension.
+        s = classify_suspicious(_access("/search?q=report.sql"))
+        self.assertIsNone(s)
+
+    def test_sensitive_file_url_encoded(self):
+        s = classify_suspicious(_access("/%2eenv"))
+        # %2e decodes to '.', so /%2eenv -> /.env
+        self.assertIsNotNone(s)
+        self.assertIn("sensitive_file", s.categories)
+
+    def test_sensitive_file_clean_paths_not_flagged(self):
+        # Benign paths that superficially resemble sensitive names must not fire.
+        for path in (
+            "/environment",           # not /.env
+            "/products/config",       # no sensitive suffix, no sensitive path
+            "/blog/backups-guide",    # word "backup" but no .backup suffix
+            "/assets/app.js",
+            "/keyboard",              # ends in "board", not a .key file
+        ):
+            self.assertIsNone(classify_suspicious(_access(path)), path)
+
+    def test_sensitive_file_and_scanner_both_fire_for_dotenv(self):
+        # /.env is both a recon path and a sensitive-file leak; report both.
+        s = classify_suspicious(_access("/.env"))
+        self.assertIsNotNone(s)
+        self.assertIn("scanner_path", s.categories)
+        self.assertIn("sensitive_file", s.categories)
+
     def test_real_attack_lines_from_sample(self):
         line = (
             '192.0.2.66 - - [10/Oct/2024:13:57:01 +0000] '
@@ -199,6 +263,20 @@ class TestClassifyIp(unittest.TestCase):
 class TestRiskSummaries(unittest.TestCase):
     def test_access_risk_levels(self):
         self.assertEqual(summarize_risk_access([], 100), "LOW")
+
+    def test_access_risk_high_on_served_sensitive_file(self):
+        # A single sensitive-file probe that returned 2xx (the secret was very
+        # likely served) escalates the whole run to HIGH on its own.
+        s = classify_suspicious(_access("/.env", status=200))
+        self.assertIn("sensitive_file", s.categories)
+        self.assertEqual(summarize_risk_access([s], 1000), "HIGH")
+
+    def test_access_risk_not_high_when_sensitive_file_blocked(self):
+        # The same probe answered with 404 is not a leak; a lone flagged
+        # request stays LOW.
+        s = classify_suspicious(_access("/.env", status=404))
+        self.assertIn("sensitive_file", s.categories)
+        self.assertEqual(summarize_risk_access([s], 1000), "LOW")
 
     def test_auth_risk_high_on_big_attack(self):
         hit = BruteForceHit(ip="x", failed_count=60, peak_in_window=60, users_tried=[])
