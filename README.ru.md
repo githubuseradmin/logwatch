@@ -2,6 +2,11 @@
 
 # logwatch
 
+![CI](https://github.com/githubuseradmin/logwatch/actions/workflows/ci.yml/badge.svg)
+![tests](https://img.shields.io/badge/tests-100_passing-brightgreen)
+![license](https://img.shields.io/badge/license-MIT-blue)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+
 Утилита командной строки для **анализа логов и отчётов по безопасности**, без
 сторонних зависимостей, написанная на чистом Python (только стандартная
 библиотека). Направьте её на access-логи NGINX/Apache или auth-логи `sshd` в
@@ -332,5 +337,5 @@ HTML-экранирование враждебных полей) и CLI цели
 
 ## Лицензия
 
-Передано в общественное достояние / в духе MIT — используйте свободно.
-Упоминание авторства приветствуется, но не обязательно.
+MIT — см. [LICENSE](LICENSE). Используйте свободно; упоминание авторства
+приветствуется, но не обязательно.

@@ -2,6 +2,11 @@ English | [Русский](README.ru.md)
 
 # logwatch
 
+![CI](https://github.com/githubuseradmin/logwatch/actions/workflows/ci.yml/badge.svg)
+![tests](https://img.shields.io/badge/tests-100_passing-brightgreen)
+![license](https://img.shields.io/badge/license-MIT-blue)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+
 A zero-dependency **log analysis & security-reporting CLI** written in pure
 Python (standard library only). Point it at NGINX/Apache access logs or Linux
 `sshd` auth logs and it produces a clear, colour-coded, sectioned security/ops
@@ -316,5 +321,5 @@ sensitive: never paste production logs into shared issues or chats.
 
 ## License
 
-Released into the public domain / MIT-style — use it freely. Attribution
-appreciated but not required.
+MIT — see [LICENSE](LICENSE). Use it freely; attribution appreciated but not
+required.
